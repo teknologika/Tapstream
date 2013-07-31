@@ -104,108 +104,110 @@ namespace TapstreamMetrics.Sdk
                     }
 
                     firingEvents.Add(e.Name);
+                }
+                    
 
-                    Core self = this;
-                    string url = String.Format(EVENT_URL_TEMPLATE, accountName, e.EncodedName);
-                    string data = postData.ToString() + e.PostData;
+                Core self = this;
+                string url = String.Format(EVENT_URL_TEMPLATE, accountName, e.EncodedName);
+                string data = postData.ToString() + e.PostData;
 
-                    // Always ask the delegate what the delay should be, regardless of what our delay member says.
-                    // The delegate may wish to override it if this is a testing scenario.
-                    int actualDelay = del.GetDelay();
+                // Always ask the delegate what the delay should be, regardless of what our delay member says.
+                // The delegate may wish to override it if this is a testing scenario.
+                int actualDelay = del.GetDelay();
 
-                    Task.Delay(TimeSpan.FromSeconds(actualDelay)).ContinueWith((prevResult) =>
+                Task.Delay(TimeSpan.FromSeconds(actualDelay)).ContinueWith((prevResult) =>
+                {
+                    TSResponse response = platform.Request(url, data);
+                    bool failed = response.Status < 200 || response.Status >= 300;
+                    bool shouldRetry = response.Status < 0 || (response.Status >= 500 && response.Status < 600);
+
+                    lock(self)
                     {
-                        TSResponse response = platform.Request(url, data);
-                        bool failed = response.Status < 200 || response.Status >= 300;
-                        bool shouldRetry = response.Status < 0 || (response.Status >= 500 && response.Status < 600);
-
-                        lock(self)
+                        if(e.OneTimeOnly)
                         {
-                            if(e.OneTimeOnly)
-                            {
-                                self.firingEvents.Remove(e.Name);
-                            }
-
-                            if(failed)
-                            {
-                                // Only increase delays if we actually intend to retry the event
-                                if(shouldRetry)
-                                {
-                                    // Not every job that fails will increase the retry delay.  It will be the responsibility of
-                                    // the first failed job to increase the delay after every failure.
-                                    if(delay == 0)
-                                    {
-                                        // This is the first job to fail, it must be the one to manage delay timing
-                                        failingEventId = e.Uid;
-                                        IncreaseDelay();
-                                    }
-                                    else if(failingEventId == e.Uid)
-                                    {
-                                        // This job is failing for a subsequent time
-                                        IncreaseDelay();
-                                    }
-                                }
-                            }
-                            else
-                            {
-                                if(e.OneTimeOnly)
-                                {
-                                    self.firedEvents.Add(e.Name);
-
-                                    platform.SaveFiredEvents(self.firedEvents);
-                                    listener.ReportOperation("fired-list-saved", e.Name);
-                                }
-
-                                // Success of any event resets the delay
-                                delay = 0;
-                            }
+                            self.firingEvents.Remove(e.Name);
                         }
 
                         if(failed)
                         {
-                            if(response.Status < 0)
-                            {
-                                Logging.Log(LogLevel.ERROR, "Tapstream Error: Failed to fire event, error={0}", response.Message);
-                            }
-                            else if(response.Status == 404)
-                            {
-                                Logging.Log(LogLevel.ERROR, "Tapstream Error: Failed to fire event, http code {0}\nDoes your event name contain characters that are not url safe? This event will not be retried.", response.Status);
-                            }
-                            else if(response.Status == 403)
-                            {
-                                Logging.Log(LogLevel.ERROR, "Tapstream Error: Failed to fire event, http code {0}\nAre your account name and application secret correct?  This event will not be retried.", response.Status);
-                            }
-                            else
-                            {
-                                string retryMsg = "";
-                                if(!shouldRetry)
-                                {
-                                    retryMsg = "  This event will not be retried.";
-                                }
-                                Logging.Log(LogLevel.ERROR, "Tapstream Error: Failed to fire event, http code {0}.{1}", response.Status, retryMsg);
-                            }
-
-                            listener.ReportOperation("event-failed", e.Name);
+                            // Only increase delays if we actually intend to retry the event
                             if(shouldRetry)
                             {
-                                listener.ReportOperation("retry", e.Name);
-                                listener.ReportOperation("job-ended", e.Name);
-                                if(del.IsRetryAllowed())
+                                // Not every job that fails will increase the retry delay.  It will be the responsibility of
+                                // the first failed job to increase the delay after every failure.
+                                if(delay == 0)
                                 {
-                                    FireEvent(e);
+                                    // This is the first job to fail, it must be the one to manage delay timing
+                                    failingEventId = e.Uid;
+                                    IncreaseDelay();
                                 }
-                                return;
+                                else if(failingEventId == e.Uid)
+                                {
+                                    // This job is failing for a subsequent time
+                                    IncreaseDelay();
+                                }
                             }
                         }
                         else
                         {
-                            Logging.Log(LogLevel.INFO, "Tapstream fired event named \"{0}\"", e.Name);
-                            listener.ReportOperation("event-succeeded", e.Name);
+                            if(e.OneTimeOnly)
+                            {
+                                self.firedEvents.Add(e.Name);
+
+                                platform.SaveFiredEvents(self.firedEvents);
+                                listener.ReportOperation("fired-list-saved", e.Name);
+                            }
+
+                            // Success of any event resets the delay
+                            delay = 0;
+                        }
+                    }
+
+                    if(failed)
+                    {
+                        if(response.Status < 0)
+                        {
+                            Logging.Log(LogLevel.ERROR, "Tapstream Error: Failed to fire event, error={0}", response.Message);
+                        }
+                        else if(response.Status == 404)
+                        {
+                            Logging.Log(LogLevel.ERROR, "Tapstream Error: Failed to fire event, http code {0}\nDoes your event name contain characters that are not url safe? This event will not be retried.", response.Status);
+                        }
+                        else if(response.Status == 403)
+                        {
+                            Logging.Log(LogLevel.ERROR, "Tapstream Error: Failed to fire event, http code {0}\nAre your account name and application secret correct?  This event will not be retried.", response.Status);
+                        }
+                        else
+                        {
+                            string retryMsg = "";
+                            if(!shouldRetry)
+                            {
+                                retryMsg = "  This event will not be retried.";
+                            }
+                            Logging.Log(LogLevel.ERROR, "Tapstream Error: Failed to fire event, http code {0}.{1}", response.Status, retryMsg);
                         }
 
-                        listener.ReportOperation("job-ended", e.Name);
-                    });
-                }
+                        listener.ReportOperation("event-failed", e.Name);
+                        if(shouldRetry)
+                        {
+                            listener.ReportOperation("retry", e.Name);
+                            listener.ReportOperation("job-ended", e.Name);
+                            if(del.IsRetryAllowed())
+                            {
+                                FireEvent(e);
+                            }
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        Logging.Log(LogLevel.INFO, "Tapstream fired event named \"{0}\"", e.Name);
+                        listener.ReportOperation("event-succeeded", e.Name);
+                    }
+
+                    listener.ReportOperation("job-ended", e.Name);
+                });
+
             }
         }
 

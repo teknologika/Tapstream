@@ -56,6 +56,7 @@ namespace TapstreamMetrics.Sdk
             get { return installEventName; }
             set { installEventName = value; }
         }
+
         public string OpenEventName
         {
             get { return openEventName; }

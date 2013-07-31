@@ -25,7 +25,16 @@ namespace TapstreamMetrics.Sdk
 
         public HashSet<string> LoadFiredEvents()
         {
-            return new HashSet<string>(NSUserDefaults.StandardUserDefaults.StringArrayForKey("kTSFiredEventsKey"));
+            string[] defaultsArray = NSUserDefaults.StandardUserDefaults.StringArrayForKey(@"kTSFiredEventsKey");
+            if (defaultsArray == null)
+            {
+                return new HashSet<string>();
+            }
+            else
+            {
+                HashSet<string> firedEvents = new HashSet<string>(defaultsArray);
+                return firedEvents;
+            }
         }
 
         public void SaveFiredEvents(HashSet<string> firedEvents)
